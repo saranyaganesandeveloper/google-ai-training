@@ -1,15 +1,28 @@
 from google.adk.agents.llm_agent import Agent
+from google.adk.models.google_llm import Gemini
+from google.adk.tools import google_search
+from google.genai import types
 
-# Mock tool implementation
-def get_current_time(city: str) -> dict:
-    """Returns the current time in a specified city."""
-    return {"status": "success", "city": city, "time": "10:30 AM"}
+print("✅ ADK components imported successfully.")
 
-root_agent = Agent(
-    model='gemini-2.5-flash',
-    name='root_agent',
-    description="Tells the current time in a specified city.",
-    instruction="You are a helpful assistant that tells the current time in cities. Use the 'get_current_time' tool for this purpose.",
-    tools=[get_current_time],
+# Retry configuration
+retry_config = types.HttpRetryOptions(
+    attempts=5,
+    exp_base=7,
+    initial_delay=1,
+    http_status_codes=[429, 500, 503, 504],
 )
 
+# Define the root agent
+root_agent = Agent(
+    name="helpful_assistant",
+    model=Gemini(
+        model="gemini-2.5-flash-lite",
+        retry_options=retry_config,
+    ),
+    description="A simple agent that can answer general questions.",
+    instruction="You are a helpful assistant. Use Google Search for current info or if unsure.",
+    tools=[google_search],
+)
+
+print("✅ Root Agent defined.")
