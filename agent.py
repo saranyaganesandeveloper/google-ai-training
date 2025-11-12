@@ -13,56 +13,86 @@ retry_config = types.HttpRetryOptions(
     http_status_codes=[429, 500, 503, 504],
 )
 
-# Outline Agent: Creates the initial blog post outline.
-outline_agent = Agent(
-    name="OutlineAgent",
+# Tech Researcher: Focuses on AI and ML trends.
+tech_researcher = Agent(
+    name="TechResearcher",
     model=Gemini(
         model="gemini-2.5-flash-lite",
         retry_options=retry_config
     ),
-    instruction="""Create a blog outline for the given topic with:
-    1. A catchy headline
-    2. An introduction hook
-    3. 3-5 main sections with 2-3 bullet points for each
-    4. A concluding thought""",
-    output_key="blog_outline",  # The result of this agent will be stored in the session state with this key.
+    instruction="""Research the latest AI/ML trends. Include 3 key developments,
+the main companies involved, and the potential impact. Keep the report very concise (100 words).""",
+    tools=[google_search],
+    output_key="tech_research",  # The result of this agent will be stored in the session state with this key.
 )
 
-print("✅ outline_agent created.")
+print("✅ tech_researcher created.")
 
-# Writer Agent: Writes the full blog post based on the outline from the previous agent.
-writer_agent = Agent(
-    name="WriterAgent",
+# Health Researcher: Focuses on medical breakthroughs.
+health_researcher = Agent(
+    name="HealthResearcher",
     model=Gemini(
         model="gemini-2.5-flash-lite",
         retry_options=retry_config
     ),
-    # The `{blog_outline}` placeholder automatically injects the state value from the previous agent's output.
-    instruction="""Following this outline strictly: {blog_outline}
-    Write a brief, 200 to 300-word blog post with an engaging and informative tone.""",
-    output_key="blog_draft",  # The result of this agent will be stored with this key.
+    instruction="""Research recent medical breakthroughs. Include 3 significant advances,
+their practical applications, and estimated timelines. Keep the report concise (100 words).""",
+    tools=[google_search],
+    output_key="health_research",  # The result will be stored with this key.
 )
 
-print("✅ writer_agent created.")
+print("✅ health_researcher created.")
 
-# Editor Agent: Edits and polishes the draft from the writer agent.
-editor_agent = Agent(
-    name="EditorAgent",
+# Finance Researcher: Focuses on fintech trends.
+finance_researcher = Agent(
+    name="FinanceResearcher",
     model=Gemini(
         model="gemini-2.5-flash-lite",
         retry_options=retry_config
     ),
-    # This agent receives the `{blog_draft}` from the writer agent's output.
-    instruction="""Edit this draft: {blog_draft}
-    Your task is to polish the text by fixing any grammatical errors, improving the flow and sentence structure, and enhancing overall clarity.""",
-    output_key="final_blog",  # This is the final output of the entire pipeline.
+    instruction="""Research current fintech trends. Include 3 key trends,
+their market implications, and the future outlook. Keep the report concise (100 words).""",
+    tools=[google_search],
+    output_key="finance_research",  # The result will be stored with this key.
 )
 
-print("✅ editor_agent created.")
+print("✅ finance_researcher created.")
 
+# The AggregatorAgent runs *after* the parallel step to synthesize the results.
+aggregator_agent = Agent(
+    name="AggregatorAgent",
+    model=Gemini(
+        model="gemini-2.5-flash-lite",
+        retry_options=retry_config
+    ),
+    # It uses placeholders to inject the outputs from the parallel agents, which are now in the session state.
+    instruction="""Combine these three research findings into a single executive summary:
+
+    **Technology Trends:**
+    {tech_research}
+    
+    **Health Breakthroughs:**
+    {health_research}
+    
+    **Finance Innovations:**
+    {finance_research}
+    
+    Your summary should highlight common themes, surprising connections, and the most important key takeaways from all three reports. The final summary should be around 200 words.""",
+    output_key="executive_summary",  # This will be the final output of the entire system.
+)
+
+print("✅ aggregator_agent created.")
+
+# The ParallelAgent runs all its sub-agents simultaneously.
+parallel_research_team = ParallelAgent(
+    name="ParallelResearchTeam",
+    sub_agents=[tech_researcher, health_researcher, finance_researcher],
+)
+
+# This SequentialAgent defines the high-level workflow: run the parallel team first, then run the aggregator.
 root_agent = SequentialAgent(
-    name="BlogPipeline",
-    sub_agents=[outline_agent, writer_agent, editor_agent],
+    name="ResearchSystem",
+    sub_agents=[parallel_research_team, aggregator_agent],
 )
 
-print("✅ Sequential Agent created.")
+print("✅ Parallel and Sequential Agents created.")
