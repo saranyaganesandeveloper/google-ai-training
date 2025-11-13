@@ -1,7 +1,8 @@
 from google.adk.agents import Agent, SequentialAgent, ParallelAgent, LoopAgent
 from google.adk.models.google_llm import Gemini
-from google.adk.tools import AgentTool, FunctionTool, google_search
 from google.genai import types
+from google.adk.agents import LlmAgent
+from google.adk.tools import google_search, AgentTool, ToolContext, FunctionTool
 
 print("✅ ADK components imported successfully.")
 
@@ -13,80 +14,108 @@ retry_config = types.HttpRetryOptions(
     http_status_codes=[429, 500, 503, 504],
 )
 
-# This agent runs ONCE at the beginning to create the first draft.
-initial_writer_agent = Agent(
-    name="InitialWriterAgent",
-    model=Gemini(
-        model="gemini-2.5-flash-lite",
-        retry_options=retry_config
-    ),
-    instruction="""Based on the user's prompt, write the first draft of a short story (around 100-150 words).
-    Output only the story text, with no introduction or explanation.""",
-    output_key="current_story",  # Stores the first draft in the state.
+# Pay attention to the docstring, type hints, and return value.
+def get_fee_for_payment_method(method: str) -> dict:
+    """Looks up the transaction fee percentage for a given payment method.
+
+    This tool simulates looking up a company's internal fee structure based on
+    the name of the payment method provided by the user.
+
+    Args:
+        method: The name of the payment method. It should be descriptive,
+                e.g., "platinum credit card" or "bank transfer".
+
+    Returns:
+        Dictionary with status and fee information.
+        Success: {"status": "success", "fee_percentage": 0.02}
+        Error: {"status": "error", "error_message": "Payment method not found"}
+    """
+    # This simulates looking up a company's internal fee structure.
+    fee_database = {
+        "platinum credit card": 0.02,  # 2%
+        "gold debit card": 0.035,  # 3.5%
+        "bank transfer": 0.01,  # 1%
+    }
+
+    fee = fee_database.get(method.lower())
+    if fee is not None:
+        return {"status": "success", "fee_percentage": fee}
+    else:
+        return {
+            "status": "error",
+            "error_message": f"Payment method '{method}' not found",
+        }
+
+
+print("✅ Fee lookup function created")
+print(f"💳 Test: {get_fee_for_payment_method('platinum credit card')}")
+
+def get_exchange_rate(base_currency: str, target_currency: str) -> dict:
+    """Looks up and returns the exchange rate between two currencies.
+
+    Args:
+        base_currency: The ISO 4217 currency code of the currency you
+                       are converting from (e.g., "USD").
+        target_currency: The ISO 4217 currency code of the currency you
+                         are converting to (e.g., "EUR").
+
+    Returns:
+        Dictionary with status and rate information.
+        Success: {"status": "success", "rate": 0.93}
+        Error: {"status": "error", "error_message": "Unsupported currency pair"}
+    """
+
+    # Static data simulating a live exchange rate API
+    # In production, this would call something like: requests.get("api.exchangerates.com")
+    rate_database = {
+        "usd": {
+            "eur": 0.93,  # Euro
+            "jpy": 157.50,  # Japanese Yen
+            "inr": 83.58,  # Indian Rupee
+        }
+    }
+
+    # Input validation and processing
+    base = base_currency.lower()
+    target = target_currency.lower()
+
+    # Return structured result with status
+    rate = rate_database.get(base, {}).get(target)
+    if rate is not None:
+        return {"status": "success", "rate": rate}
+    else:
+        return {
+            "status": "error",
+            "error_message": f"Unsupported currency pair: {base_currency}/{target_currency}",
+        }
+
+
+print("✅ Exchange rate function created")
+print(f"💱 Test: {get_exchange_rate('USD', 'EUR')}")
+
+# Currency agent with custom function tools
+currency_agent = LlmAgent(
+    name="currency_agent",
+    model=Gemini(model="gemini-2.5-flash-lite", retry_options=retry_config),
+    instruction="""You are a smart currency conversion assistant.
+
+    For currency conversion requests:
+    1. Use `get_fee_for_payment_method()` to find transaction fees
+    2. Use `get_exchange_rate()` to get currency conversion rates
+    3. Check the "status" field in each tool's response for errors
+    4. Calculate the final amount after fees based on the output from `get_fee_for_payment_method` and `get_exchange_rate` methods and provide a clear breakdown.
+    5. First, state the final converted amount.
+        Then, explain how you got that result by showing the intermediate amounts. Your explanation must include: the fee percentage and its
+        value in the original currency, the amount remaining after the fee, and the exchange rate used for the final conversion.
+
+    If any tool returns status "error", explain the issue to the user clearly.
+    """,
+    tools=[get_fee_for_payment_method, get_exchange_rate],
 )
 
-print("✅ initial_writer_agent created.")
+print("✅ Currency agent created with custom function tools")
+print("🔧 Available tools:")
+print("  • get_fee_for_payment_method - Looks up company fee structure")
+print("  • get_exchange_rate - Gets current exchange rates")
 
-# This agent's only job is to provide feedback or the approval signal. It has no tools.
-critic_agent = Agent(
-    name="CriticAgent",
-    model=Gemini(
-        model="gemini-2.5-flash-lite",
-        retry_options=retry_config
-    ),
-    instruction="""You are a constructive story critic. Review the story provided below.
-    Story: {current_story}
-    
-    Evaluate the story's plot, characters, and pacing.
-    - If the story is well-written and complete, you MUST respond with the exact phrase: "APPROVED"
-    - Otherwise, provide 2-3 specific, actionable suggestions for improvement.""",
-    output_key="critique",  # Stores the feedback in the state.
-)
-
-print("✅ critic_agent created.")
-
-# This is the function that the RefinerAgent will call to exit the loop.
-def exit_loop():
-    """Call this function ONLY when the critique is 'APPROVED', indicating the story is finished and no more changes are needed."""
-    return {"status": "approved", "message": "Story approved. Exiting refinement loop."}
-
-
-print("✅ exit_loop function created.")
-
-# This agent refines the story based on critique OR calls the exit_loop function.
-refiner_agent = Agent(
-    name="RefinerAgent",
-    model=Gemini(
-        model="gemini-2.5-flash-lite",
-        retry_options=retry_config
-    ),
-    instruction="""You are a story refiner. You have a story draft and critique.
-    
-    Story Draft: {current_story}
-    Critique: {critique}
-    
-    Your task is to analyze the critique.
-    - IF the critique is EXACTLY "APPROVED", you MUST call the `exit_loop` function and nothing else.
-    - OTHERWISE, rewrite the story draft to fully incorporate the feedback from the critique.""",
-    output_key="current_story",  # It overwrites the story with the new, refined version.
-    tools=[
-        FunctionTool(exit_loop)
-    ],  # The tool is now correctly initialized with the function reference.
-)
-
-print("✅ refiner_agent created.")
-
-# The LoopAgent contains the agents that will run repeatedly: Critic -> Refiner.
-story_refinement_loop = LoopAgent(
-    name="StoryRefinementLoop",
-    sub_agents=[critic_agent, refiner_agent],
-    max_iterations=2,  # Prevents infinite loops
-)
-
-# The root agent is a SequentialAgent that defines the overall workflow: Initial Write -> Refinement Loop.
-root_agent = SequentialAgent(
-    name="StoryPipeline",
-    sub_agents=[initial_writer_agent, story_refinement_loop],
-)
-
-print("✅ Loop and Sequential Agents created.")
+root_agent = currency_agent
